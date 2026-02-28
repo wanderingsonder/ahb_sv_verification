@@ -1,11 +1,11 @@
-`include "/home/dvft0901/ahb_sv_project/test/ahb_single_tr_wr_rd_test.sv"
-`include "/home/dvft0901/ahb_sv_project/test/ahb_unspec_len_wr_rd_test.sv"
-`include "/home/dvft0901/ahb_sv_project/test/ahb_wrap4_wr_rd_test.sv"
-`include "/home/dvft0901/ahb_sv_project/test/ahb_inc4_wr_rd_test.sv"
-`include "/home/dvft0901/ahb_sv_project/test/ahb_wrap8_wr_rd_test.sv"
-`include "/home/dvft0901/ahb_sv_project/test/ahb_inc8_wr_rd_test.sv"
-`include "/home/dvft0901/ahb_sv_project/test/ahb_wrap16_wr_rd_test.sv"
-`include "/home/dvft0901/ahb_sv_project/test/ahb_inc16_wr_rd_test.sv"
+`include "ahb_single_tr_wr_rd_test.sv"
+`include "ahb_unspec_len_wr_rd_test.sv"
+`include "ahb_wrap4_wr_rd_test.sv"
+`include "ahb_inc4_wr_rd_test.sv"
+`include "ahb_wrap8_wr_rd_test.sv"
+`include "ahb_inc8_wr_rd_test.sv"
+`include "ahb_wrap16_wr_rd_test.sv"
+`include "ahb_inc16_wr_rd_test.sv"
 
 class ahb_test;
    virtual ahb_interface vif;
