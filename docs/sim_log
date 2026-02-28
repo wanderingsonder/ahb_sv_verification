@@ -568,15 +568,10 @@
 
 ================================================================
   COVERAGE SUMMARY — Synopsys urg
-  Tool    : urg T-2022.06_Full64
-  Command : urg -dir <test>_coverage.vdb -report <test>_report
 ================================================================
 
   Covergroup   : ahb_cover  (in ahb_coverage)
   Coverage     : line + cond + FSM + branch + tgl + assert
-
-
-  -- FUNCTIONAL COVERAGE --
 
   Coverpoint    Signal       Bins                             Hit
   ------------  -----------  -------------------------------  ----
@@ -594,27 +589,5 @@
 
   htrans        tr.htrans    zero        : 2'b00 (NON_SEQ)     YES
                              one         : 2'b01 (SEQ)         YES
-
-
-  -- PER-TEST STRUCTURAL COVERAGE REPORT (Synopsys urg) --
-
-  Test Name                    | SCORE  | LINE   | COND   | TOGGLE | FSM    | BRANCH
-  -----------------------------|--------|--------|--------|--------|--------|-------
-  ahb_single_tr_wr_rd_test     |  --    |  --    |  --    |  --    |  --    |  --
-  ahb_unspec_len_wr_rd_test    |  --    |  --    |  --    |  --    |  --    |  --
-  ahb_wrap4_wr_rd_test         | 50.85  | 28.25  | 62.50  | 25.69  | 90.00  | 28.26
-  ahb_wrap8_wr_rd_test         | 51.29  | 28.25  | 62.50  | 29.97  | 90.00  | 28.26
-  ahb_wrap16_wr_rd_test        | 53.30  | 28.25  | 62.50  | 25.38  | 90.00  | 28.26
-  ahb_inc4_wr_rd_test          | 46.56  | 21.90  | 50.00  | 26.61  | 80.00  | 30.43
-  ahb_inc8_wr_rd_test          | 45.97  | 21.59  | 50.00  | 25.08  | 80.00  | 30.43
-  ahb_inc16_wr_rd_test         | 49.77  | 21.59  | 50.00  | 32.87  | 80.00  | 30.43
-
-  NOTE : Coverage databases for tc1 (single) and tc2 (unspec) were
-         not collected in this run. Scores shown as -- for those tests.
-
-  NOTE : FSM coverage of 90% across WRAP tests and 80% across INCR
-         tests reflects that not all state transitions (e.g., ERROR
-         path via haddr >= 256) are exercised by the write-read-back
-         test pattern. This is expected for the current test suite.
 
 ================================================================
