@@ -1,0 +1,21 @@
+module ahb_top;
+import ahb_pkg::*;
+
+ahb_interface vif();
+ahb_test test_h;
+
+   ahb_slave dut(vif.clk,vif.hwdata,vif.haddr,vif.hsize,vif.hburst,vif.hresetn,vif.hsel,vif.hwrite,vif.htrans,vif.hresp,vif.hready,vif.hrdata);
+
+initial begin
+   vif.clk=0;
+   forever #5 vif.clk <= ~vif.clk;
+end
+
+initial begin
+   test_h = new(vif);
+   test_h.build_and_run();
+   #1500;
+   $finish;
+end
+   assign vif.next_addr = dut.next_addr;
+endmodule
