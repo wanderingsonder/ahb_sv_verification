@@ -1,23 +1,104 @@
 class ahb_coverage;
-ahb_transaction tr;
 
-function new();
-   ahb_cover=new();
-   tr=new();
-endfunction
+   ahb_transaction tr;
 
-function collect(ahb_transaction tr);
-   this.tr=tr;
-   ahb_cover.sample();
-endfunction
+   ////////////////////////////////////////////////////////////
+   // COVERGROUP
+   ////////////////////////////////////////////////////////////
 
-covergroup ahb_cover;
+   covergroup ahb_cover;
 
-coverpoint tr.hwdata  iff(!tr.hresetn) {bins hwdata1[10]= {[1:50]};}
-coverpoint tr.haddr   iff(!tr.hresetn) {bins haddr1={55};}
-coverpoint tr.hwrite  iff(!tr.hresetn) {bins hwr_1={1}; bins hwr_0= {0};}
-coverpoint tr.hsize   iff(!tr.hresetn) {bins hs_4={3'b10};}
-coverpoint tr.hburst  iff(!tr.hresetn) {bins hburst1[]= {[0:7]};}
-coverpoint tr.htrans  iff(!tr.hresetn) {bins zero={2'b00}; bins one={2'b01};}
-endgroup
+      /////////////////////////////////////////////////////////
+      // DATA COVERAGE
+      /////////////////////////////////////////////////////////
+
+      coverpoint tr.hwdata iff(tr.hresetn)
+      {
+         bins data_range[] = {[1:50]};
+      }
+
+      /////////////////////////////////////////////////////////
+      // ADDRESS COVERAGE
+      /////////////////////////////////////////////////////////
+
+      coverpoint tr.haddr iff(tr.hresetn)
+      {
+         bins addr55 = {55};
+      }
+
+      /////////////////////////////////////////////////////////
+      // WRITE / READ
+      /////////////////////////////////////////////////////////
+
+      coverpoint tr.hwrite iff(tr.hresetn)
+      {
+         bins write = {1};
+         bins read  = {0};
+      }
+
+      /////////////////////////////////////////////////////////
+      // SIZE
+      /////////////////////////////////////////////////////////
+
+      coverpoint tr.hsize iff(tr.hresetn)
+      {
+         bins byte_size  = {3'b000};
+         bins half_size  = {3'b001};
+         bins word_size  = {3'b010};
+      }
+
+      /////////////////////////////////////////////////////////
+      // BURST TYPE
+      /////////////////////////////////////////////////////////
+
+      coverpoint tr.hburst iff(tr.hresetn)
+      {
+         bins burst_types[] = {[0:7]};
+      }
+
+      /////////////////////////////////////////////////////////
+      // TRANS TYPE
+      /////////////////////////////////////////////////////////
+
+      coverpoint tr.htrans iff(tr.hresetn)
+      {
+         bins idle   = {2'b00};
+         bins nonseq = {2'b10};
+         bins seq    = {2'b11};
+      }
+
+      /////////////////////////////////////////////////////////
+      // CROSS COVERAGE
+      /////////////////////////////////////////////////////////
+
+      cross tr.hwrite, tr.hburst;
+
+   endgroup
+
+
+   ////////////////////////////////////////////////////////////
+   // CONSTRUCTOR
+   ////////////////////////////////////////////////////////////
+
+   function new();
+
+      tr = new();
+      ahb_cover = new();
+
+   endfunction
+
+
+   ////////////////////////////////////////////////////////////
+   // SAMPLE FUNCTION
+   ////////////////////////////////////////////////////////////
+
+   function void collect(ahb_transaction tr);
+
+      this.tr = tr;
+
+      ahb_cover.sample();
+
+   endfunction
+
+
 endclass
