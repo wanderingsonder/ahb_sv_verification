@@ -1,21 +1,82 @@
-module ahb_top;
+`include "ahb_interface.sv"
+`include "ahb_pkg.sv"
+
 import ahb_pkg::*;
 
-ahb_interface vif();
-ahb_test test_h;
+module testbench;
 
-   ahb_slave dut(vif.clk,vif.hwdata,vif.haddr,vif.hsize,vif.hburst,vif.hresetn,vif.hsel,vif.hwrite,vif.htrans,vif.hresp,vif.hready,vif.hrdata);
+   ////////////////////////////////////////////////////////////
+   // INTERFACE INSTANCE
+   ////////////////////////////////////////////////////////////
 
-initial begin
-   vif.clk=0;
-   forever #5 vif.clk <= ~vif.clk;
-end
+   ahb_interface vif();
 
-initial begin
-   test_h = new(vif);
-   test_h.build_and_run();
-   #1500;
-   $finish;
-end
-   assign vif.next_addr = dut.next_addr;
+
+   ////////////////////////////////////////////////////////////
+   // DUT INSTANCE
+   ////////////////////////////////////////////////////////////
+
+   ahb_slave dut(
+
+      .clk     (vif.clk),
+      .hresetn (vif.hresetn),
+
+      .haddr   (vif.haddr),
+      .hwdata  (vif.hwdata),
+      .hsize   (vif.hsize),
+      .hburst  (vif.hburst),
+      .htrans  (vif.htrans),
+      .hwrite  (vif.hwrite),
+      .hsel    (vif.hsel),
+
+      .hrdata  (vif.hrdata),
+      .hresp   (vif.hresp),
+      .hready  (vif.hready)
+
+   );
+
+
+   ////////////////////////////////////////////////////////////
+   // CLOCK GENERATION
+   ////////////////////////////////////////////////////////////
+
+   initial
+   begin
+
+      vif.clk = 0;
+
+      forever #5 vif.clk = ~vif.clk;
+
+   end
+
+
+   ////////////////////////////////////////////////////////////
+   // WAVEFORM DUMP (EDA Playground)
+   ////////////////////////////////////////////////////////////
+
+   initial
+   begin
+
+      $dumpfile("ahb_wave.vcd");
+      $dumpvars(0,testbench);
+
+   end
+
+
+   ////////////////////////////////////////////////////////////
+   // TEST EXECUTION
+   ////////////////////////////////////////////////////////////
+
+   ahb_test test_h;
+
+   initial
+   begin
+
+      test_h = new(vif);
+
+      test_h.build_and_run();
+
+   end
+
+
 endmodule
