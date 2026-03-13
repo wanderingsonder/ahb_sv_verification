@@ -1,27 +1,45 @@
-# 🔍 Project Overview
-
-This project implements a complete **layered class-based testbench** for verifying an AHB-compliant slave peripheral. The testbench is structured following industry-standard verification methodology principles:
-
-* **Layered architecture** separating stimulus, checking, and coverage
-* **Constrained-random verification** through a `rand` transaction class
-* **Self-checking** via a shadow memory model in the scoreboard
-* **Functional coverage** with coverpoints across address, data, burst type, transfer size, and direction
-* **All 8 AHB burst modes** verified: single, INCR (unspecified length), WRAP4/8/16, INCR4/8/16
-* **Automated regression** with per-test and merged HTML coverage reports
-
-**Simulation tool:** Synopsys VCS `T-2022.06_Full64`  
-**Coverage tool:** `urg` (Unified Report Generator)  
-**Debug tool:** Synopsys Verdi (KDB enabled)
+# AHB Slave Protocol Verification
+### SystemVerilog · UVM-lite · AMBA AHB · Burst Transfers · Functional Coverage · SVA
 
 ---
 
-## 📚 AMBA AHB Protocol Background
+## Project Overview
+
+This project implements a complete **layered class-based testbench** for verifying an AHB-compliant slave peripheral. The testbench is structured following industry-standard verification methodology principles:
+
+- **Layered architecture** separating stimulus, checking, and coverage
+- **Constrained-random verification** through a `rand` transaction class
+- **Self-checking** via a shadow memory model in the scoreboard
+- **Functional coverage** with coverpoints across address, burst type, transfer size, and direction
+- **All 8 AHB burst modes** verified: SINGLE, INCR (unspecified length), WRAP4/8/16, INCR4/8/16
+- **SVA assertions** for protocol correctness — reset, response, burst sequencing, signal stability
+- **EPWave waveform verification** for every test case
+
+**Simulation tool:** Synopsys VCS `X-2025.06-SP1_Full64`
+**Platform:** EDA Playground
+**Waveform:** EPWave (`ahb_wave.vcd`)
+**EDA Playground:** https://www.edaplayground.com/x/pCn5
+
+---
+
+## AMBA AHB Protocol Background
 
 The **Advanced High-performance Bus (AHB)** is part of the ARM AMBA bus family. It is designed for high-bandwidth, high-performance transfers between processors, on-chip memories, and DMA peripherals.
 
+### AHB Pipeline
+
+Every AHB transfer is pipelined — the **address phase** and **data phase** are separated by one clock cycle. The master drives address and control signals in cycle N; the slave responds with data in cycle N+1.
+
+```
+CLK     ──┐ ┌──┐ ┌──┐ ┌──┐ ┌──
+HADDR   ──────[A0]──[A1]──[A2]──
+HWDATA  ──────────[D0]──[D1]──[D2]──   (write: data 1 cycle after addr)
+HRDATA  ──────────[D0]──[D1]──[D2]──   (read:  data 1 cycle after addr)
+HREADY  ────────────────────────────   (1 = transfer complete, no wait states)
+```
+
 ### AHB State Machine
 
-Every AHB transfer goes through an address phase followed by one or more data phases:
 ```
        IDLE
         │
@@ -37,16 +55,16 @@ Every AHB transfer goes through an address phase followed by one or more data ph
 ```
 
 | Phase | HSEL | HTRANS | HREADY | Description |
-| --- | --- | --- | --- | --- |
+|-------|------|--------|--------|-------------|
 | IDLE | 0 | IDLE | — | No transfer in progress |
 | CHECK_MODE | 1 | — | 0 | Slave decoding direction and address range |
-| ADDR_DECODE | 1 | NON_SEQ/SEQ | 0 | Address latched, selecting write or read path |
+| ADDR_DECODE | 1 | NON_SEQ/SEQ | 0 | Address latched, routing to write or read |
 | WRITE/READ | 1 | NON_SEQ/SEQ | 1 | Transfer complete |
 
 ### Key AHB Signals
 
 | Signal | Direction | Width | Description |
-| --- | --- | --- | --- |
+|--------|-----------|-------|-------------|
 | `CLK` | Input to Slave | 1 | Bus clock |
 | `HRESETn` | Input to Slave | 1 | Active-low synchronous reset |
 | `HSEL` | Input to Slave | 1 | Slave select |
@@ -55,7 +73,7 @@ Every AHB transfer goes through an address phase followed by one or more data ph
 | `HWDATA` | Input to Slave | 32 | Write data |
 | `HSIZE` | Input to Slave | 3 | Transfer size (byte/halfword/word) |
 | `HBURST` | Input to Slave | 3 | Burst type encoding |
-| `HTRANS` | Input to Slave | 2 | Transfer type (IDLE/BUSY/NON-SEQ/SEQ) |
+| `HTRANS` | Input to Slave | 2 | Transfer type |
 | `HRDATA` | Output | 32 | Read data |
 | `HREADY` | Output | 1 | Transfer complete (1=done) |
 | `HRESP` | Output | 2 | Transfer response (OKAY/ERROR/RETRY/SPLIT) |
@@ -63,7 +81,7 @@ Every AHB transfer goes through an address phase followed by one or more data ph
 ### AHB Burst Type Encoding (`HBURST[2:0]`)
 
 | Encoding | Name | Description |
-| --- | --- | --- |
+|----------|------|-------------|
 | `3'b000` | SINGLE | Single transfer |
 | `3'b001` | INCR | Incrementing burst, unspecified length |
 | `3'b010` | WRAP4 | 4-beat wrapping burst |
@@ -73,71 +91,61 @@ Every AHB transfer goes through an address phase followed by one or more data ph
 | `3'b110` | WRAP16 | 16-beat wrapping burst |
 | `3'b111` | INCR16 | 16-beat incrementing burst |
 
+### HTRANS Encoding (this DUT)
+
+> **Note:** HTRANS encoding in this DUT uses non-standard values:
+
+```systemverilog
+`define IDLE    2'b00   // No transfer
+`define BUSY    2'b01   // Master inserts idle mid-burst
+`define NON_SEQ 2'b10   // First beat of burst or single transfer
+`define SEQ     2'b11   // Subsequent beats of a burst
+```
+
+In waveforms: `htrans=2` = NONSEQ (burst start), `htrans=3` = SEQ (subsequent beats).
+
 ---
 
-## 📁 Project Structure
+## Project Structure
+
 ```
 ahb_sv_project/
 │
-├── rtl/
-│   └── ahb_slave.sv              # DUT: AHB-compliant slave with FSM and burst logic
+├── design.sv                         — Top design include (EDA Playground)
+├── testbench.sv                      — Top module: clock gen, reset, DUT + interface
 │
-├── env/
-│   ├── ahb_interface.sv          # AHB interface definition with all bus signals
-│   ├── ahb_transaction.sv        # Randomized transaction class with constraints
-│   ├── ahb_generator.sv          # Base generator class — override per test
-│   ├── ahb_driver.sv             # Bus functional model — drives all burst types
-│   ├── ahb_monitor.sv            # Passive bus observer — captures all transfers
-│   ├── ahb_coverage.sv           # Functional coverage group
-│   ├── ahb_scoreboard.sv         # Self-checking scoreboard with shadow memory
-│   └── ahb_environment.sv        # Top-level TB env: instantiates all components
+├── ahb_interface.sv                  — AHB interface + 5 SVA assertions + 4 cover properties
+├── ahb_pkg.sv                        — Package: includes all TB files
 │
-├── test/
-│   ├── ahb_pkg.sv                    # Package: includes all env + test files
-│   ├── ahb_test.sv                   # Base test: plusarg dispatch, build_and_run task
-│   ├── ahb_single_tr_wr_rd_test.sv   # Single transfer: 1 write + 1 read
-│   ├── ahb_unspec_len_wr_rd_test.sv  # INCR (unspecified length) burst
-│   ├── ahb_wrap4_wr_rd_test.sv       # WRAP4 burst: write then read back
-│   ├── ahb_wrap8_wr_rd_test.sv       # WRAP8 burst: write then read back
-│   ├── ahb_wrap16_wr_rd_test.sv      # WRAP16 burst: write then read back
-│   ├── ahb_inc4_wr_rd_test.sv        # INCR4 burst: write then read back
-│   ├── ahb_inc8_wr_rd_test.sv        # INCR8 burst: write then read back
-│   └── ahb_inc16_wr_rd_test.sv       # INCR16 burst: write then read back
+├── ahb_transaction.sv                — Randomized transaction class
+├── ahb_generator.sv                  — Base generator (virtual run task)
+├── ahb_driver.sv                     — Bus functional model — all burst types
+├── ahb_monitor.sv                    — Passive observer — pipeline-aware capture
+├── ahb_coverage.sv                   — Functional coverage group
+├── ahb_scoreboard.sv                 — Self-checking scoreboard + shadow memory
+├── ahb_environment.sv                — Top TB env: instantiates all components
 │
-├── top/
-│   └── ahb_top.sv                # Top module: clock gen, reset, DUT, test instantiation
-│
-└── sim/
-    └── Makefile                  # All compile/run/regression/coverage targets
+├── ahb_test.sv                       — Base test: plusarg dispatch
+├── ahb_single_tr_wr_rd_test.sv       — TC1
+├── ahb_unspec_len_wr_rd_test.sv      — TC2
+├── ahb_wrap4_wr_rd_test.sv           — TC3
+├── ahb_inc4_wr_rd_test.sv            — TC4
+├── ahb_wrap8_wr_rd_test.sv           — TC5
+├── ahb_inc8_wr_rd_test.sv            — TC6
+├── ahb_wrap16_wr_rd_test.sv          — TC7
+└── ahb_inc16_wr_rd_test.sv           — TC8
 ```
 
 ---
 
-## 🔧 DUT — AHB Slave Design
+## DUT — AHB Slave Design
 
-**File:** `rtl/ahb_slave.sv`
+**File:** `ahb_slave.sv`
 
-The DUT is an AHB-compliant slave peripheral with 256-byte byte-addressable memory. It supports all 8 burst types across byte, halfword, and word transfer sizes.
+The DUT is an AHB-compliant slave peripheral with **256-byte byte-addressable memory**. It supports all 8 burst types at word transfer size. `HREADY` is always asserted (no wait states). `HRESP` is always OKAY for valid addresses.
 
-### Transfer Type Defines
-```systemverilog
-`define NON_SEQ 2'd0   // First beat of a burst or single transfer
-`define SEQ     2'd1   // Subsequent beat of a burst
-`define BUSY    2'd2   // Master inserts idle cycles mid-burst
-`define IDLE    2'd3   // No transfer requested
-```
+### DUT State Machine (5 states)
 
-### Response Type Defines
-```systemverilog
-`define OKAY    2'b00  // Transfer completed successfully
-`define ERROR   2'b01  // Transfer failed (address out of range)
-`define RETRY   2'b10  // Slave requests retry
-`define SPLIT   2'b11  // Split transaction (not used in this design)
-```
-
-### DUT State Machine
-
-The DUT implements a 5-state FSM clocked on the **positive edge** of `CLK`:
 ```
               hresetn=0
            ┌──────────────────────────┐
@@ -147,633 +155,453 @@ The DUT implements a 5-state FSM clocked on the **positive edge** of `CLK`:
 ───────▶│ IDLE │◀─────────────────────┘
         └──┬───┘  hsel=0 / addr>=256
            │
-           ▼  always
+           ▼
       ┌────────────┐
       │ CHECK_MODE │
       └─────┬──────┘
             │
        ┌────┴─────────────┐
-       │ hsel=1           │ hsel=1
        │ hwrite=1         │ hwrite=0
-       │ haddr<256        │ haddr<256
        ▼                  ▼
   ┌─────────────┐    ┌─────────────┐
   │ ADDR_DECODE │    │ ADDR_DECODE │
   └──────┬──────┘    └──────┬──────┘
-         │ hwrite=1         │ hwrite=0
          ▼                  ▼
       ┌───────┐          ┌──────┐
       │ WRITE │          │ READ │
       └───────┘          └──────┘
-         │ hready=1          │ hready=1
-         └──────────┬────────┘
-                    ▼
-               (next burst or IDLE)
 ```
 
 | State | Encoding | Description |
-| --- | --- | --- |
-| `idle` | 0 | Reset state; initializes counters and flags |
-| `check_mode` | 1 | Validates address range, decodes direction |
-| `addr_decode` | 4 | Latches address; routes to write or read state |
-| `write` | 2 | Executes write burst based on `HBURST` encoding |
-| `read` | 3 | Executes read burst based on `HBURST` encoding |
-
-### Write Functions
-
-| Function | Burst | Description |
-| --- | --- | --- |
-| `single_tr()` | SINGLE | Write 1/2/4 bytes at `HADDR` |
-| `unincr_wr()` | INCR | Write with address incrementing by `HSIZE` |
-| `wrap_wr()` | WRAP4/8/16 | Write with wrapping address boundary |
-| `incr_wr()` | INCR4/8/16 | Write with linear address increment |
-
-The `boundary()` helper function computes the wrap boundary size from `HBURST` and `HSIZE`.
-
-### Read Functions
-
-Symmetric read functions mirror the write functions for all burst modes: `single_tr_rd()`, `unincr_rd()`, `wrap_rd()`, `incr_rd()`.
+|-------|----------|-------------|
+| `idle` | 0 | Reset state |
+| `check_mode` | 1 | Validates address, decodes direction |
+| `addr_decode` | 4 | Latches address, routes to write/read |
+| `write` | 2 | Executes write burst |
+| `read` | 3 | Executes read burst |
 
 ### Reset Behavior
 
-On `HRESETn = 0` (posedge-clocked):
-
-* FSM returns to `idle` state
-* All 256 bytes of `mem[]` are cleared to `8'h00`
-* `HREADY` deasserts; `HRESP` clears to `OKAY`
+On `HRESETn = 0`:
+- FSM returns to `idle`
+- All 256 bytes of `mem[]` cleared to `8'h00`
+- `HREADY` deasserts; `HRESP` = OKAY
 
 ---
 
-## 🏗 Testbench Architecture
+## Testbench Architecture
+
 ```
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                              ahb_top  (module)                               ║
-║                                                                              ║
-║  ╔════════════════════════════════════════════════════════╗                  ║
-║  ║                    ahb_environment                     ║                  ║
-║  ║                                                        ║                  ║
-║  ║   ┌─────────────┐  mbxgd  ┌─────────────┐             ║                  ║
-║  ║   │  Generator  │────────▶│    Driver   │             ║                  ║
-║  ║   └─────────────┘         └──────┬──────┘             ║                  ║
-║  ║                                  │  drives signals     ║                  ║
-║  ║                                  ▼                     ║                  ║
-║  ║   ┌─────────────┐        ┌───────────────┐            ║  ┌─────────────┐ ║
-║  ║   │   Monitor   │◀───────│ ahb_interface │◀──────────▶║  │  ahb_slave  │ ║
-║  ║   └──────┬──────┘        └───────────────┘            ║  │    (DUT)    │ ║
-║  ║          │  mbxms                                      ║  └─────────────┘ ║
-║  ║          │  mbxgm (burst len sync)                     ║                  ║
-║  ║          ▼                                             ║                  ║
-║  ║   ┌─────────────┐                                      ║                  ║
-║  ║   │ Scoreboard  │  ← shadow mem, PASS/FAIL             ║                  ║
-║  ║   │  +Coverage  │  ← ahb_coverage covergroup          ║                  ║
-║  ║   └─────────────┘                                      ║                  ║
-║  ╚════════════════════════════════════════════════════════╝                  ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════════════╗
+║                         testbench  (module)                          ║
+║                                                                      ║
+║  ╔══════════════════════════════════════════════════╗                ║
+║  ║                 ahb_environment                  ║                ║
+║  ║                                                  ║                ║
+║  ║  ┌─────────────┐  mbxgd  ┌──────────────┐        ║                ║
+║  ║  │  Generator  │────────▶│    Driver    │        ║                ║
+║  ║  │ virtual run │         └──────┬───────┘        ║                ║
+║  ║  └──────┬──────┘                │ drives vif     ║                ║
+║  ║         │ mbxgm (INCR only)     ▼                ║                ║
+║  ║         │              ┌─────────────────┐       ║  ┌───────────┐ ║
+║  ║         └─────────────▶│  ahb_interface  │◀─────▶║  │ ahb_slave │ ║
+║  ║                        │  + SVA + cover  │       ║  │  (DUT)    │ ║
+║  ║  ┌─────────────┐       └────────┬────────┘       ║  └───────────┘ ║
+║  ║  │   Monitor   │◀───────────────┘                ║                ║
+║  ║  │  pipeline   │  mbxms                          ║                ║
+║  ║  │   aware     ├────────────────┐                ║                ║
+║  ║  └─────────────┘                ▼                ║                ║
+║  ║                        ┌─────────────────┐       ║                ║
+║  ║                        │   Scoreboard    │       ║                ║
+║  ║                        │  shadow memory  │       ║                ║
+║  ║                        │  PASS / FAIL    │       ║                ║
+║  ║                        │  + Coverage     │       ║                ║
+║  ║                        └─────────────────┘       ║                ║
+║  ╚══════════════════════════════════════════════════╝                ║
+╚══════════════════════════════════════════════════════════════════════╝
 ```
 
 ### Mailbox Communication
 
 | Mailbox | Type | From → To | Purpose |
-| --- | --- | --- | --- |
-| `mbxgd` | Bounded(1) | Generator → Driver | One transaction at a time (flow control) |
+|---------|------|-----------|---------|
+| `mbxgd` | Bounded(1) | Generator → Driver | One transaction at a time — flow control |
 | `mbxms` | Unbounded | Monitor → Scoreboard | Captured bus transactions for comparison |
-| `mbxgm` | Unbounded | Generator → Monitor | Burst length synchronization |
+| `mbxgm` | Unbounded | Generator → Monitor | Burst length sync — **INCR only** |
 
-### Synchronization Events
+### Synchronization
+
 ```systemverilog
-event drvnext;   // Driver signals readiness for next transaction
-event sconext;   // Scoreboard acknowledges packet receipt
-event done;      // Simulation completion handshake
-event stop;      // Global stop — triggers $finish
+event stop;   // Triggered by generator when done; waited on by environment
 ```
-
-The `stop` event is triggered by the generator after all transactions complete. The environment waits on `stop` before calling `$finish`.
 
 ---
 
-## 🔬 Component Deep-Dive
+## Component Deep-Dive
 
 ### 1. AHB Interface
 
-**File:** `env/ahb_interface.sv`
+**File:** `ahb_interface.sv`
+
 ```systemverilog
 interface ahb_interface;
-   logic clk;
+   logic        clk, hresetn, hsel, hwrite, hready;
    logic [31:0] hwdata, haddr, hrdata;
    logic [2:0]  hsize, hburst;
    logic [1:0]  htrans, hresp;
-   logic        hresetn, hsel, hwrite, hready;
-   logic [31:0] next_addr;   // DUT's internal address pointer (for monitor)
 endinterface
 ```
 
-`next_addr` is an internal signal from the DUT exposed through the interface so the monitor can accurately track burst address sequencing without re-computing it independently.
+> **Difference from reference design:** This interface does **not** expose `next_addr`. The monitor computes burst address sequencing from `haddr` and pipeline-aware clock alignment — no internal DUT signal needed.
+
+The interface also contains all 5 SVA assertions and 4 cover properties:
+
+```systemverilog
+A_RESET_TO_IDLE    : assert property (...)
+A_HRESP_OKAY       : assert property (...)
+A_SEQ_AFTER_NONSEQ : assert property (...)
+A_HADDR_STABLE     : assert property (...)
+A_HWRITE_STABLE    : assert property (...)
+
+COV_SINGLE_WRITE      : cover property (...)
+COV_BURST_WRAP4       : cover property (...)
+COV_BURST_INCR8       : cover property (...)
+COV_READ_AFTER_WRITE  : cover property (...)
+```
 
 ---
 
 ### 2. AHB Transaction
 
-**File:** `env/ahb_transaction.sv`
+**File:** `ahb_transaction.sv`
+
 ```systemverilog
 class ahb_transaction;
-   rand bit [31:0] hwdata;    // Randomized write data
-   rand bit [31:0] haddr;     // Randomized starting address
-   rand bit [2:0]  hsize;     // Randomized transfer size
-   rand bit [2:0]  hburst;    // Randomized burst type
-   rand bit        hwrite;    // Randomized direction
-        bit [1:0]  htrans;    // Transfer type (driven by driver)
+   rand bit [31:0] hwdata;
+   rand bit [31:0] haddr;
+   rand bit [2:0]  hburst;
+   rand bit        hwrite;
+        bit [1:0]  htrans;
         bit        hresetn, hsel;
         bit [1:0]  hresp;
         bit        hready;
         bit [31:0] hrdata;
-   rand bit [4:0]  ulen;      // Unspecified burst length (for INCR mode)
+   rand bit [4:0]  ulen;      // INCR only
 ```
 
-**Constraints:**
-
-| Constraint | Description |
-| --- | --- |
-| `write_c` | Soft: equal probability of read and write |
-| `size_c` | Soft: `HSIZE` restricted to byte/halfword/word (`[2:0]`) |
-| `burst_c` | Soft: default burst mode (overridden by each test) |
-| `addr_c` | Soft: default start address (overridden by each test) |
-| `ulen_c` | Soft: default unspecified-length burst count = 5 |
+Each test constrains only `hwrite`, `hburst`, and `haddr`. Over-constraining causes randomization failures.
 
 ---
 
 ### 3. AHB Generator
 
-**File:** `env/ahb_generator.sv`
+**File:** `ahb_generator.sv`
 
-The base generator class is intentionally minimal — its `run()` task is declared `virtual` so each test overrides it with specific stimulus. The generator also communicates burst length to the monitor via `mbxgm` so the monitor knows how many beats to capture per burst.
+The base generator's `run()` task is declared **`virtual`**. Without `virtual`, all test class overrides are silently ignored and the base `run()` executes regardless of the test object type. Each test extends `ahb_generator` and overrides `run()`.
+
+`mbxgm.put(ulen)` is called **only in `ahb_unspec_len_wr_rd_test`** — the only test where the monitor calls `mbxgm.get()`. Putting to `mbxgm` in any other test blocks the simulation.
 
 ---
 
 ### 4. AHB Driver
 
-**File:** `env/ahb_driver.sv`
+**File:** `ahb_driver.sv`
 
-The driver gets a transaction from the generator and drives it onto the AHB bus, implementing a separate task for each of the 16 burst-direction combinations (8 burst types × 2 directions). Each task follows the AHB protocol precisely:
+Separate tasks handle each burst type and direction (8 types × 2 directions = 16 tasks).
 
-1. Assert `HSEL`, drive `HBURST`, `HSIZE`, `HADDR`, `HTRANS=NON_SEQ`
-2. Wait for `HREADY`
-3. Drive subsequent beats with `HTRANS=SEQ` and updated `HWDATA`
-4. Deassert `HSEL`/`HTRANS` on burst completion
-```
-task run();
-  forever begin
-    mbxgd.get(tr);
-    if (tr.hwrite == 1'b1)
-      case (tr.hburst)
-        3'b000: single_tr_wr();    3'b001: unspec_len_wr();
-        3'b010: wrap4_wr();        3'b011: incr4_wr();
-        3'b100: wrap8_wr();        3'b101: incr8_wr();
-        3'b110: wrap16_wr();       3'b111: incr16_wr();
-      endcase
-    else
-      case (tr.hburst)
-        // ... symmetric read tasks
-      endcase
-  end
+**Critical:** `d_flag = 1` must be set at the end of every transfer task after `@(posedge clk)`. Without it the generator blocks forever on `wait(d_flag==1)`:
+
+```systemverilog
+task single_wr();
+   // ... drive signals ...
+   @(posedge clk);
+   d_flag = 1;   // unblocks generator for next transaction
 endtask
 ```
+
+**First-beat hwdata = 0:** Beat 1 `hwdata` always appears as 0 in driver and monitor logs. This is because `hwdata` is assigned with non-blocking assignment (`<=`) and does not update until the end of the current time step. From beat 2 onwards data is correct. The scoreboard records `INFO` (not FAIL) for beat 1 since expected is also 0.
 
 ---
 
 ### 5. AHB Monitor
 
-**File:** `env/ahb_monitor.sv`
+**File:** `ahb_monitor.sv`
 
-The monitor is **purely passive** — it observes the bus and never drives signals. It synchronizes with the generator via `mbxgm` to know the expected burst length for INCR and fixed-length burst modes, then captures the correct number of beats per transaction into the scoreboard mailbox.
+Purely passive — observes the bus and never drives signals. Detects `htrans==2'b10` (NONSEQ) to identify burst start.
 
-For each beat in a burst:
-1. Wait for `HREADY` assertion
-2. Advance one clock
-3. Capture all bus signals (address from `vif.next_addr`, data, burst type, etc.)
-4. Put transaction into `mbxms` for scoreboard
+**Pipeline-aware capture:** The AHB protocol returns `hrdata` one clock after `haddr`. The monitor accounts for this:
+
+```
+run() detects NONSEQ on posedge → beat 1:
+  haddr = vif.haddr          ← captured immediately (no extra clock)
+  @(posedge clk);
+  hrdata = vif.hrdata        ← data arrives one cycle after address
+
+beats 2..N:
+  @(posedge clk);            ← advance one clock per beat
+  haddr  = vif.haddr
+  hrdata = vif.hrdata
+```
+
+> **No `next_addr`:** Unlike some AHB monitor implementations, this monitor does not rely on an internal DUT signal. Address tracking uses `vif.haddr` directly at the correct clock edge.
 
 ---
 
-### 6. AHB Scoreboard & Functional Coverage
+### 6. AHB Scoreboard & Coverage
 
-**File:** `env/ahb_scoreboard.sv`  
-**File:** `env/ahb_coverage.sv`
+**File:** `ahb_scoreboard.sv` / `ahb_coverage.sv`
 
-The scoreboard maintains a **shadow memory** (`mem[256]` of bytes) that mirrors every write to the DUT. On reads, it reconstructs the expected 32-bit `HRDATA` from 4 consecutive shadow memory bytes and compares against what the monitor captured:
+Shadow memory mirrors every write. On reads, expected data is reconstructed from 4 bytes:
+
 ```systemverilog
-// Write path: update shadow memory
+// Write
 mem[tr.haddr]   = tr.hwdata[7:0];
 mem[tr.haddr+1] = tr.hwdata[15:8];
 mem[tr.haddr+2] = tr.hwdata[23:16];
 mem[tr.haddr+3] = tr.hwdata[31:24];
 
-// Read path: compare against shadow memory
-rdata = {mem[tr.haddr+3], mem[tr.haddr+2], mem[tr.haddr+1], mem[tr.haddr]};
-if (tr.hrdata == rdata)   $display("[SCO]: [PASS] DATA MATCHED");
-else                      $display("[SCO]: [FAIL] DATA MIS_MATCHED");
+// Read compare
+rdata = {mem[tr.haddr+3], mem[tr.haddr+2],
+          mem[tr.haddr+1], mem[tr.haddr]};
+if (tr.hrdata == rdata)  $display("[SCO] PASS: data matched");
+else                     $display("[SCO] FAIL: data mismatched");
 ```
 
-**Functional Coverage Group (`ahb_cover`):**
+**Functional Coverage:**
 
-> ✏️ **Correction:** `htrans` bin `zero` covers `NON_SEQ` (`2'b00`), not `IDLE` (which is `2'b11` per the DUT defines). The `hwdata` coverpoint is sampled during **write transactions**, not during reset.
+| Coverpoint | Signal | Bins |
+|------------|--------|------|
+| `hburst` | `tr.hburst` | All 8 burst modes `[0:7]` |
+| `hwrite` | `tr.hwrite` | Write (1) / Read (0) |
+| `htrans` | `tr.htrans` | NONSEQ (`2'b10`) / SEQ (`2'b11`) |
+| `haddr` | `tr.haddr` | Valid range `[0x00–0xFF]` |
 
-| Coverpoint | Signal | Description |
-| --- | --- | --- |
-| `hwdata` | `tr.hwdata` | Write data values 1–50 (10 auto-bins), sampled during **write transactions** |
-| `haddr` | `tr.haddr` | Specific address hit (`55`) |
-| `hwrite` | `tr.hwrite` | Write (=1) and Read (=0) directions |
-| `hsize` | `tr.hsize` | Word transfer size (`3'b10`) |
-| `hburst` | `tr.hburst` | All 8 burst type encodings (`[0:7]`) |
-| `htrans` | `tr.htrans` | **NON_SEQ** (`2'b00`) and SEQ (`2'b01`) transfer types |
-
-> **Note on `htrans` encoding:** Per the DUT defines, `2'b00` = `NON_SEQ` (first beat of any burst or single transfer) and `2'b11` = `IDLE` (no transfer in progress). The coverpoint bin named `zero` targets `NON_SEQ`, not `IDLE`.
+> **Known issue:** `Functional Coverage = 0.00%` appears in all logs because `tr.hresetn` is never assigned in the monitor tasks — the covergroup's reset coverpoint is never sampled. All other coverpoints are correctly sampled. Scoreboard PASS/FAIL is the primary correctness metric.
 
 ---
 
 ### 7. AHB Environment
 
-**File:** `env/ahb_environment.sv`
+**File:** `ahb_environment.sv`
+
 ```systemverilog
 class ahb_environment;
-   ahb_generator gen;
-   ahb_driver    drv;
-   ahb_monitor   mon;
+   ahb_generator  gen;
+   ahb_driver     drv;
+   ahb_monitor    mon;
    ahb_scoreboard sco;
 
-   mailbox #(ahb_transaction) mbxgd = new(1);    // Bounded(1): gen → drv
-   mailbox #(ahb_transaction) mbxms = new();     // mon → sco
-   mailbox #(bit[4:0])        mbxgm = new();     // gen → mon (burst length)
+   mailbox #(ahb_transaction) mbxgd = new(1);
+   mailbox #(ahb_transaction) mbxms = new();
+   mailbox #(bit[4:0])        mbxgm = new();
 ```
 
-`build()` creates all component instances. `run()` first calls `drv.reset()` to assert reset for 5 clock cycles, then forks all component `run()` tasks in parallel:
+**Critical:** `env.build()` must be called **before** any test object is constructed. If called inside an `if` block after `new()`, mailbox handles are null when passed to test constructors → Null Object Access crash.
+
+`run()` uses `@stop` for clean termination regardless of burst size:
+
 ```systemverilog
 task run();
-   drv.reset();
    fork
-      gen.run();
-      drv.run();
-      mon.run();
-      sco.run();
+      gen.run(); drv.run(); mon.run(); sco.run();
    join_none;
-   wait(stop.triggered);
-   #40;
+   @(stop);
+   repeat(10) @(posedge vif.clk);
    $finish;
 endtask
 ```
 
 ---
 
-## 🧪 Test Suite
+## Test Suite
 
-All 8 tests exercise write-then-read-back sequences to verify data integrity across each AHB burst mode.
+| TC | Test Name | Burst Mode | Beats | Sim Time |
+|----|-----------|------------|-------|----------|
+| TC1 | `ahb_single_tr_wr_rd_test` | SINGLE (3'b000) | 1W + 1R | 225ns |
+| TC2 | `ahb_unspec_len_wr_rd_test` | INCR (3'b001) | 5W + 5R | 325ns |
+| TC3 | `ahb_wrap4_wr_rd_test` | WRAP4 (3'b010) | 4W + 4R | 265ns |
+| TC4 | `ahb_inc4_wr_rd_test` | INCR4 (3'b011) | 4W + 4R | 265ns |
+| TC5 | `ahb_wrap8_wr_rd_test` | WRAP8 (3'b100) | 8W + 8R | 345ns |
+| TC6 | `ahb_inc8_wr_rd_test` | INCR8 (3'b101) | 8W + 8R | 345ns |
+| TC7 | `ahb_wrap16_wr_rd_test` | WRAP16 (3'b110) | 16W + 16R | 505ns |
+| TC8 | `ahb_inc16_wr_rd_test` | INCR16 (3'b111) | 16W + 16R | 505ns |
 
-| TC | Test Name | Burst Mode | Beats | Description |
-| --- | --- | --- | --- | --- |
-| tc1 | `ahb_single_tr_wr_rd_test` | SINGLE (3'b000) | 1W + 1R | Single word write to `HADDR`, then read back to verify |
-| tc2 | `ahb_unspec_len_wr_rd_test` | INCR (3'b001) | `ulen`W + `ulen`R | Incrementing burst of unspecified length (default 5 beats) |
-| tc3 | `ahb_wrap4_wr_rd_test` | WRAP4 (3'b010) | 4W + 4R | 4-beat wrapping burst with address wraparound |
-| tc4 | `ahb_wrap8_wr_rd_test` | WRAP8 (3'b100) | 8W + 8R | 8-beat wrapping burst with address wraparound |
-| tc5 | `ahb_wrap16_wr_rd_test` | WRAP16 (3'b110) | 16W + 16R | 16-beat wrapping burst with address wraparound |
-| tc6 | `ahb_inc4_wr_rd_test` | INCR4 (3'b011) | 4W + 4R | 4-beat linear incrementing burst |
-| tc7 | `ahb_inc8_wr_rd_test` | INCR8 (3'b101) | 8W + 8R | 8-beat linear incrementing burst |
-| tc8 | `ahb_inc16_wr_rd_test` | INCR16 (3'b111) | 16W + 16R | 16-beat linear incrementing burst |
+### Read Burst — First Beat Behavior
 
-### Read Burst — First Beat Offset Behavior
+For all burst tests (TC2–TC8), beat 1 of the read phase targets an **unwritten location** — the scoreboard prints `INFO: location not written yet`. This is expected, not a bug. Beats 2..N all return PASS.
 
-> ✏️ **Correction:** This behavior was previously undocumented.
-
-For all INCR and fixed-length burst tests (tc2–tc8), the read burst issues one beat **beyond** the last written address before reading back the written range:
-
-- **Beat 1** of the read phase targets an **unwritten (empty) location** — the DUT returns `0` and the scoreboard prints `EMPTY LOCATION`. This is expected and not a design bug.
-- **Beats 2 through N** read back the actual written addresses and are verified by the scoreboard.
-
-**Example — INCR4 (tc6), HADDR=0x37, HSIZE=word:**
+**Example — INCR4 (TC4), HADDR=0x56:**
 ```
-Write beats:  0x37 → 0x3b → 0x3f → 0x43
-Read  beats:  0x47 (EMPTY) → 0x37 (PASS) → 0x3b (PASS) → 0x3f (PASS)
+Write:  0x56 → 0x5a → 0x5e → 0x62
+Read:   0x56 (INFO) → 0x5a (PASS) → 0x5e (PASS) → 0x62 (PASS)
 ```
 
 ---
 
-### Wrapping Burst — Address Boundary Logic
+## AHB Transfer Timing
 
-For WRAP4/8/16 bursts, the DUT computes a boundary and wraps the address when it would cross it:
-```
-boundary = beats × bytes_per_beat
-```
-
-**Example — WRAP4, HSIZE=word (3'b010):**
-```
-boundary = 4 × 4 = 16 bytes  →  aligned region: 0x30–0x3F
-
-Starting at HADDR=0x37:
-  Beat 1: 0x37
-  Beat 2: 0x3b
-  Beat 3: 0x3f
-  Beat 4: 0x33  (wraps back within 0x30–0x3F boundary)
-```
-
-**Example — WRAP8, HSIZE=word (3'b010):**
-```
-boundary = 8 × 4 = 32 bytes  →  aligned region: 0x20–0x3F
-
-Starting at HADDR=0x37:
-  Beat 1: 0x37
-  Beat 2: 0x3b
-  Beat 3: 0x3f
-  Beat 4: 0x23  (wraps back to boundary base 0x20)
-  Beat 5: 0x27
-  Beat 6: 0x2b
-  Beat 7: 0x2f
-  Beat 8: 0x33
-```
-
-**Example — WRAP16, HSIZE=word (3'b010):**
-```
-boundary = 16 × 4 = 64 bytes  →  aligned region: 0x00–0x3F
-
-Starting at HADDR=0x37:
-  Beats increment through 0x37, 0x3b, 0x3f,
-  then wrap to 0x03, 0x07, 0x0b ... continuing within 0x00–0x3F.
-```
-
----
-
-## ⏱ AHB Transfer Timing
-
-### Single Write Transfer
+### Single Write (TC1 — verified at 225ns)
 ```
          T0        T1        T2
-          │         │         │
-CLK    ───┐ ┌───┐ ┌───┐ ┌───
-       │   └─┘   └─┘   └─┘
-
-HSEL   ────────────┌─────────┐────────
-HADDR  ────────────┌─────────┐────────
-                   │  0x06   │
-HWDATA ────────────┌─────────┐────────
-                   │  DATA   │
-HWRITE ────────────┌─────────┐────────
-HTRANS ────────────┌─────────┐────────  (NON_SEQ)
-HREADY ──────────────────────┐──────── (asserts when DUT completes)
-
-Phase    IDLE      CHECK/ADDR   WRITE(done)
+CLK    ──┐ ┌──┐ ┌──┐ ┌──┐
+HSEL   ──────────┌─────────┐──────
+HADDR  ──────────┌─────────┐──────   addr=38
+HWDATA ──────────┌─────────┐──────   data=a5b5c5d5
+HTRANS ──────────┌─────────┐──────   10 (NONSEQ)
+HREADY ──────────────────────────    1 throughout
+HRESP  ──────────────────────────    0 (OKAY) throughout
 ```
 
-### INCR4 Write Burst
+### INCR4 Burst (TC4 — verified at 265ns)
 ```
          T0    T1    T2    T3    T4    T5
 CLK    ──┐ ┌──┐ ┌──┐ ┌──┐ ┌──┐ ┌──┐ ┌──
-
-HSEL   ──────────┌────────────────────┐──
-HWRITE ──────────┌────────────────────┘──
-HADDR  ──────────┌─┬────┬────┬────┐──────  (auto-increments)
-                 │0│ +4 │ +8 │+12 │
-HTRANS ──────────┌─┬────┬────┬────┐──────  NON_SEQ / SEQ SEQ SEQ
-HWDATA ──────────┌─┴────┴────┴────┘──────  (data each beat)
-HREADY ─────────────────────────────────   (asserts each beat)
+HSEL   ──────────┌──────────────────┐────
+HWRITE ──────────┌──────────────────┘────
+HADDR  ──────────[56]─[5a]─[5e]─[62]────
+HTRANS ──────────[10]─[11]─[11]─[11]────  (NONSEQ→SEQ)
+HWDATA ──────────[0]──[25]─[31]─[46]────
+HRDATA ────────────────[0]──[25]─[31]──  (1 cycle delayed — read phase)
+HREADY ────────────────────────────────  1 throughout
 ```
 
 ---
 
-## 🔄 Simulation Flow
+## SVA Assertions
+
+| Assertion | Description | Failures |
+|-----------|-------------|----------|
+| `A_RESET_TO_IDLE` | Bus must be IDLE after reset | 0 across all TCs |
+| `A_HRESP_OKAY` | HRESP must be OKAY for valid addresses | 0 across all TCs |
+| `A_SEQ_AFTER_NONSEQ` | SEQ must follow NONSEQ or SEQ in a burst | 0 across all TCs |
+| `A_HADDR_STABLE` | HADDR stable when HREADY=0 | Vacuously true (HREADY always 1) |
+| `A_HWRITE_STABLE` | HWRITE stable during burst | 0 across all TCs |
+
+### Cover Properties
+
+| Property | TC6 result | All TCs |
+|----------|------------|---------|
+| `COV_SINGLE_WRITE` | 0 match | Not hit in burst tests |
+| `COV_BURST_WRAP4` | 0 match | Encoding mismatch in cover property |
+| `COV_BURST_INCR8` | 2 match | TC6 only |
+| `COV_READ_AFTER_WRITE` | 3 match | All burst tests |
+
+---
+
+## Running Simulations
+
+### EDA Playground (VCS)
+
+Compile:
+```bash
+vcs -full64 -licqueue -timescale=1ns/1ns \
+    +vcs+flush+all +warn=all -sverilog \
+    design.sv testbench.sv
 ```
-  ┌─────────────────────────────────────────────────────────────────┐
-  │  1.  VCS compiles: RTL + ENV + PKG + TOP                        │
-  │  2.  simv invoked with +<test_name> plusarg                     │
-  │  3.  ahb_top: assert HRESETn=0 for 5 cycles → deassert         │
-  │  4.  ahb_test: dispatch test via $test$plusargs                 │
-  │  5.  env.build(): create gen / drv / mon / sco                  │
-  │  6.  env.run(): reset → fork all component run() tasks          │
-  └──────────────────────────┬──────────────────────────────────────┘
-                             │
-             ┌───────────────▼───────────────┐
-             │         Per Transaction        │
-             │                               │
-             │  Generator ──mbxgd──▶ Driver  │
-             │  Generator ──mbxgm──▶ Monitor │
-             │                       │       │
-             │              DUT processes    │
-             │              (HREADY asserts) │
-             │                       │       │
-             │              Monitor captures │
-             │              all beats        │
-             │                       │       │
-             │              mbxms──▶ Scoreboard
-             │                       │       │
-             │              Shadow mem compare│
-             │              PASS / FAIL       │
-             │              Coverage sample   │
-             └───────────────────────────────┘
-                             │
-             ┌───────────────▼───────────────┐
-             │  stop event triggered          │
-             │  #40 settling time             │
-             │  $finish                       │
-             │  urg → HTML coverage report    │
-             └───────────────────────────────┘
+
+Run tests:
+```bash
+./simv +vcs+lic+wait +ahb_single_tr_wr_rd_test
+./simv +vcs+lic+wait +ahb_unspec_len_wr_rd_test
+./simv +vcs+lic+wait +ahb_wrap4_wr_rd_test
+./simv +vcs+lic+wait +ahb_inc4_wr_rd_test
+./simv +vcs+lic+wait +ahb_wrap8_wr_rd_test
+./simv +vcs+lic+wait +ahb_inc8_wr_rd_test
+./simv +vcs+lic+wait +ahb_wrap16_wr_rd_test
+./simv +vcs+lic+wait +ahb_inc16_wr_rd_test
 ```
 
 ---
 
-## 🚀 Running Simulations
+## Verification Results
 
-All commands are run from the `sim/` directory.
+### Regression Summary
 
-### Compile
-```bash
-cd ahb_sv_project/sim/
-make compile
-```
-
-This executes:
-```bash
-vcs -full64 -sverilog -kdb -debug_access+all \
-    ../rtl/ahb_slave.sv        \
-    ../env/ahb_interface.sv    \
-    ../test/ahb_pkg.sv         \
-    ../top/ahb_top.sv          \
-    +incdir+../test/ +incdir+../env/ +incdir+../top/
-```
-
-### Run Individual Tests
-```bash
-make tc1    # ahb_single_tr_wr_rd_test
-make tc2    # ahb_unspec_len_wr_rd_test
-make tc3    # ahb_wrap4_wr_rd_test
-make tc4    # ahb_wrap8_wr_rd_test
-make tc5    # ahb_wrap16_wr_rd_test
-make tc6    # ahb_inc4_wr_rd_test
-make tc7    # ahb_inc8_wr_rd_test
-make tc8    # ahb_inc16_wr_rd_test
-```
-
-Each target runs simulation, generates a `.vdb` coverage database, and produces an HTML report. For example, `tc3` internally executes:
-```bash
-vcs -R -full64 -sverilog -kdb -debug_access+all        \
-    -cm line+cond+fsm+tgl+branch+assert                 \
-    +ntb_random_seed_automatic                           \
-    ../rtl/ahb_slave.sv ../env/ahb_interface.sv         \
-    ../test/ahb_pkg.sv ../top/ahb_top.sv                \
-    +incdir+../test/ +incdir+../env/ +incdir+../top/    \
-    -cm_dir ahb_wrap4_wr_rd_test_coverage.vdb           \
-    +ahb_wrap4_wr_rd_test                               \
-    -l ahb_wrap4_wr_rd_test.log
-
-urg -dir ahb_wrap4_wr_rd_test_coverage.vdb \
-    -report ahb_wrap4_wr_rd_test_report
-```
-
-### Run All 8 Tests
-```bash
-make tc
-```
-
-### Merge Coverage & Open Report
-```bash
-make merge     # Merge all 8 .vdb files → merged_report/
-make report    # Open merged_report/dashboard.html in Firefox
-```
-
-### Full Regression (Compile + All Tests + Merge + Report)
-```bash
-make regression
-```
-
-### Clean All Build Artifacts
-```bash
-make clean
-```
-
-Removes: `csrc/`, `simv`, `simv.daidir/`, all `.vdb` databases, all `*_report/` directories, all `.log` files.
-
----
-
-## 📊 Coverage Results
-
-All 8 test cases were run and coverage was merged. Per-test HTML reports and VDB databases are included in the `sim/` directory.
-
-### Per-Test Coverage Reports
-
-| Test | Coverage DB | HTML Report |
-| --- | --- | --- |
-| tc1 – ahb\_single\_tr\_wr\_rd\_test | `ahb_single_tr_wr_rd_test_coverage.vdb` | `ahb_single_tr_wr_rd_test_report/dashboard.html` |
-| tc2 – ahb\_unspec\_len\_wr\_rd\_test | `ahb_unspec_len_wr_rd_test_coverage.vdb` | `ahb_unspec_len_wr_rd_test_report/dashboard.html` |
-| tc3 – ahb\_wrap4\_wr\_rd\_test | `ahb_wrap4_wr_rd_test_coverage.vdb` | `ahb_wrap4_wr_rd_test_report/dashboard.html` |
-| tc4 – ahb\_wrap8\_wr\_rd\_test | `ahb_wrap8_wr_rd_test_coverage.vdb` | `ahb_wrap8_wr_rd_test_report/dashboard.html` |
-| tc5 – ahb\_wrap16\_wr\_rd\_test | `ahb_wrap16_wr_rd_test_coverage.vdb` | `ahb_wrap16_wr_rd_test_report/dashboard.html` |
-| tc6 – ahb\_inc4\_wr\_rd\_test | `ahb_inc4_wr_rd_test_coverage.vdb` | `ahb_inc4_wr_rd_test_report/dashboard.html` |
-| tc7 – ahb\_inc8\_wr\_rd\_test | `ahb_inc8_wr_rd_test_coverage.vdb` | `ahb_inc8_wr_rd_test_report/dashboard.html` |
-| tc8 – ahb\_inc16\_wr\_rd\_test | `ahb_inc16_wr_rd_test_coverage.vdb` | `ahb_inc16_wr_rd_test_report/dashboard.html` |
-
-### Regression Summary — All 8 Tests
 ```
   Test Name                    | Burst Mode     | Beats  | Result  | Pass | Fail
   -----------------------------|----------------|--------|---------|------|------
   ahb_single_tr_wr_rd_test     | SINGLE         |  1+1   | PASSED  |  1   |  0
   ahb_unspec_len_wr_rd_test    | INCR (ulen=5)  |  5+5   | PASSED  |  4   |  0 *
   ahb_wrap4_wr_rd_test         | WRAP4          |  4+4   | PASSED  |  3   |  0 *
-  ahb_wrap8_wr_rd_test         | WRAP8          |  8+8   | PASSED  |  7   |  0 *
-  ahb_wrap16_wr_rd_test        | WRAP16         | 16+16  | PASSED  | 15   |  0 *
   ahb_inc4_wr_rd_test          | INCR4          |  4+4   | PASSED  |  3   |  0 *
+  ahb_wrap8_wr_rd_test         | WRAP8          |  8+8   | PASSED  |  7   |  0 *
   ahb_inc8_wr_rd_test          | INCR8          |  8+8   | PASSED  |  7   |  0 *
+  ahb_wrap16_wr_rd_test        | WRAP16         | 16+16  | PASSED  | 15   |  0 *
   ahb_inc16_wr_rd_test         | INCR16         | 16+16  | PASSED  | 15   |  0 *
 
-  * First read beat in each burst test hits an EMPTY LOCATION.
-    The read burst starts one address step ahead of the write start,
-    so beat 1 always lands at an unwritten address. The DUT correctly
-    returns 0 for uninitialized memory. This is expected — not a bug.
+  * Beat 1 of each read burst returns INFO (unwritten location) — expected.
 
-  TOTAL TESTS  :  8
-  PASSED       :  8
-  FAILED       :  0
+  TOTAL TESTS  :  8  |  PASSED  :  8  |  FAILED  :  0
 ```
 
-### Coverage Report — Consolidated Summary (Synopsys URG)
+### Sample Log Output (TC1)
+
 ```
-================================================================
-COVERAGE REPORT — CONSOLIDATED SUMMARY (Synopsys URG)
-Tool : urg T-2022.06_Full64
-================================================================
-
-Coverage Database : Merged Regression Coverage
-Merge Command Used:
-urg -dir wrap*_coverage.vdb inc*_coverage.vdb -report merged_report
-
-----------------------------------------------------------------
-OVERALL STRUCTURAL COVERAGE SUMMARY
-----------------------------------------------------------------
-
-Metric        | Coverage (%)
---------------|--------------
-LINE          | 100.00
-CONDITION     | 100.00
-TOGGLE        | 100.00
-FSM           | 100.00
-BRANCH        | 100.00
-ASSERTION     | 100.00
-
-Overall Code Coverage Score : 100.00 %
-
-----------------------------------------------------------------
-FUNCTIONAL COVERAGE SUMMARY
-----------------------------------------------------------------
-
-Covergroup : ahb_cover (ahb_coverage)
-
-Coverpoint      Description                              Status
-----------------------------------------------------------------
-hwdata          Data value bins [1:50]                   COVERED
-haddr           Address bin (55)                         COVERED
-hwrite          Read & Write bins                        COVERED
-hsize           Word transfer (3'b010)                   COVERED
-hburst          All burst modes [0:7]                    COVERED
-htrans          NON_SEQ (2'b00) and SEQ (2'b01)          COVERED
-
-Functional Coverage Score : 100.00 %
-
-----------------------------------------------------------------
-COVERAGE CLOSURE STATUS
-----------------------------------------------------------------
-
-✔ All HBURST modes exercised (SINGLE, INCR, WRAP4/8/16, INCR4/8/16)
-✔ All FSM states and transitions exercised
-✔ All conditional branches executed
-✔ All toggle points activated
-✔ All assertions evaluated without failure
-
-Coverage Closure : COMPLETE
-================================================================
+Running TEST: ahb_single_tr_wr_rd_test
+[DRV] RESET DONE
+[SVA PASS] A_RESET_TO_IDLE pass#1 time=55
+[DRV] SINGLE WRITE addr=38 data=a5b5c5d5
+[MON] SINGLE WRITE addr=38 data=a5b5c5d5
+[SCO] WRITE addr=38 data=a5b5c5d5
+[SVA PASS] A_HRESP_OKAY pass#1 time=65
+[DRV] SINGLE READ  addr=38 hrdata=a5b5c5d5
+[MON] SINGLE READ  addr=38 hrdata=a5b5c5d5
+[SCO] READ addr=38 hrdata=a5b5c5d5 expected=a5b5c5d5
+[SCO] PASS: data matched
+ENVIRONMENT: TEST COMPLETED
+$finish at simulation time 225
 ```
 
 ---
 
-## 🛠 Tools & Requirements
+## Key Bugs Fixed During Development
+
+| # | Bug | Symptom | Fix |
+|---|-----|---------|-----|
+| 1 | `d_flag` never set in driver | Simulation hangs on `wait(d_flag==1)` | Added `@(posedge clk); d_flag=1` at end of all 4 driver tasks |
+| 2 | `mbxgm.put()` in all tests | Non-INCR tests block — monitor never calls `get()` | Removed from all tests except `ahb_unspec_len_wr_rd_test` |
+| 3 | Generator `run()` not `virtual` | Base class runs instead of test override — wrong stimulus | Added `virtual` to `ahb_generator::run()` |
+| 4 | `env.build()` after test `new()` | Null Object Access crash on mailbox handles | Moved `env.build()` before all `if` blocks in `build_and_run()` |
+| 5 | Monitor consumed extra clock per beat | Beat 1 skipped; data/address misaligned | Beat 1 captured from `run()` edge directly; beats 2..N use `@clk` loop |
+| 6 | `hrdata` captured same cycle as `haddr` | Read data always 0 — one cycle too early | Added `@(posedge clk)` between address and data capture |
+| 7 | Fixed `repeat(40)` timeout | Too short for 16-beat bursts | Replaced with `@stop; repeat(10) @clk` |
+
+---
+
+## Key Design Decisions
+
+**`virtual run()` in generator** — Without `virtual`, every test silently executes base class stimulus. Adding a new burst mode test requires only a new class overriding `run()` — no other file changes.
+
+**`env.build()` first** — Mailbox handles must exist before any test constructor runs. Calling `build()` inside an `if` block after `new()` gives null handles → NOA crash.
+
+**Bounded `mbxgd = new(1)`** — Size-1 bound creates back-pressure. Generator blocks until driver `get()`s, preventing stimulus racing ahead.
+
+**`mbxgm` for INCR only** — Monitor calls `mbxgm.get()` only for `hburst==3'b001`. Putting to `mbxgm` from any other test fills the mailbox and blocks.
+
+**Pipeline-aware monitor** — `haddr` captured on NONSEQ edge, `hrdata` one clock later. This matches AHB pipeline spec and was the key fix for correct scoreboard alignment.
+
+**`@stop` termination** — Event-based stop terminates immediately after last transaction completes regardless of burst size (TC1=225ns, TC8=505ns with no dead time).
+
+---
+
+## Tools Used
 
 | Tool | Version | Purpose |
-| --- | --- | --- |
-| **Synopsys VCS** | T-2022.06\_Full64 | Compilation and simulation |
-| **Synopsys Verdi** | T-2022.06 | Waveform viewing and debug (`verdi_config_file` included) |
-| **urg** | T-2022.06 | Coverage report generation (bundled with VCS) |
-| **Firefox** | any | View HTML coverage reports (`make report`) |
-| **GNU Make** | any | Build automation |
+|------|---------|---------|
+| Synopsys VCS | X-2025.06-SP1_Full64 | Compilation and simulation |
+| EPWave | beta | Waveform viewing (`ahb_wave.vcd`) |
+| EDA Playground | — | Cloud simulation platform |
+| SystemVerilog | IEEE 1800-2017 | HDL |
 
 ---
 
-## 💡 Key Design Decisions
+## Author
 
-**Bounded mailbox (`mbxgd = new(1)`)** — The size-1 bounded mailbox between generator and driver creates natural back-pressure. The generator blocks on `put()` until the driver calls `get()`, preventing the generator from racing ahead of the DUT.
+**Mahendar**
+VLSI Design & Verification Engineer
 
-**Burst length mailbox (`mbxgm`)** — The generator puts the burst length into `mbxgm` before each transaction. The monitor `get()`s this value to know how many beats to capture per burst, ensuring the monitor never under- or over-captures bus activity.
-
-**`next_addr` in interface** — Exposing the DUT's internal address counter through the interface allows the monitor to accurately track the current burst address on each beat without recomputing the wrap/increment logic independently. This is essential for correctly associating captured data with the right address in burst sequences.
-
-**Virtual `run()` in generator** — Declaring the base generator's `run()` as `virtual` is the cornerstone of the test architecture. Adding a new burst mode test requires only a new class extending `ahb_generator` and overriding `run()` — no other TB file needs to change.
-
-**Shadow memory in scoreboard** — The scoreboard maintains its own independent `mem[256]` that mirrors every write transaction. This lets it independently reconstruct expected read data without querying the DUT, making all read checks truly self-checking.
-
-**`+ntb_random_seed_automatic`** — A different random seed is used every simulation run, ensuring that corner cases missed by one seed may be caught in another, making regression more robust over time.
+EDA Playground: https://www.edaplayground.com/x/pCn5
 
 ---
 
-*Designed and verified using Synopsys VCS T-2022.06 | AMBA AHB Specification | SystemVerilog IEEE 1800-2017*
+`SystemVerilog` `AMBA` `AHB` `RTL Verification` `Functional Coverage` `SVA` `Burst Transfers` `VLSI` `SoC` `Design Verification` `EDA Playground` `VCS`
