@@ -1,344 +1,132 @@
 class ahb_monitor;
-   virtual ahb_interface vif;
-   ahb_transaction tr;
-  
-   int len=0;
-   bit [4:0] temp;
-   mailbox #(ahb_transaction)mbxms;
-   mailbox #(bit [4:0]) mbxgm;
 
-   function new(mailbox #(ahb_transaction)mbxms,mailbox #(bit [4:0]) mbxgm,virtual ahb_interface vif);
-     this.mbxms = mbxms;
-     this.mbxgm = mbxgm;
-     this.vif   = vif;
+   virtual ahb_interface vif;
+   mailbox #(ahb_transaction) mbxms;
+   mailbox #(bit [4:0]) mbxgm;
+   ahb_transaction tr;
+   bit [4:0] burst_len;
+
+   function new(mailbox #(ahb_transaction) mbxms,
+                mailbox #(bit [4:0]) mbxgm,
+                virtual ahb_interface vif);
+      this.mbxms = mbxms;
+      this.mbxgm = mbxgm;
+      this.vif   = vif;
    endfunction
 
-task single_tr_wr();
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1;
-   tr.hwdata  = vif.hwdata;
-   tr.haddr   = vif.haddr;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] single transaction write haddr=%0d hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-endtask
+   task single_write();
+      tr        = new();
+      tr.haddr  = vif.haddr;
+      @(posedge vif.clk);
+      tr.hwdata = vif.hwdata;
+      tr.hwrite = 1;
+      mbxms.put(tr);
+      $display("[MON] SINGLE WRITE addr=%0h data=%0h",
+               tr.haddr, tr.hwdata);
+   endtask
 
-task single_tr_rd();
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.haddr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] single transaction read haddr=%0d hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-endtask
+   task single_read();
+      tr        = new();
+      tr.haddr  = vif.haddr;
+      tr.hwrite = 0;
+      @(posedge vif.clk);
+      tr.hrdata = vif.hrdata;
+      mbxms.put(tr);
+      $display("[MON] SINGLE READ addr=%0h data=%0h",
+               tr.haddr, tr.hrdata);
+   endtask
 
-task unspec_len_wr();
-   mbxgm.get(temp);
-   repeat(temp)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b1;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] unspecified length write haddr=%0d hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-   end
-endtask
+   task burst_write(int beats);
+      tr        = new();
+      tr.haddr  = vif.haddr;
+      tr.hwdata = vif.hwdata;
+      tr.hwrite = 1;
+      mbxms.put(tr);
+      $display("[MON] BURST WRITE addr=%0h data=%0h",
+               tr.haddr, tr.hwdata);
 
-task unspec_len_rd();
-   mbxgm.get(temp);
-   repeat(temp)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] unspecified length read haddr=%0d hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-   end
-endtask
+      repeat(beats-1)
+      begin
+         tr = new();
+         @(posedge vif.clk);
+         tr.haddr  = vif.haddr;
+         tr.hwdata = vif.hwdata;
+         tr.hwrite = 1;
+         mbxms.put(tr);
+         $display("[MON] BURST WRITE addr=%0h data=%0h",
+                  tr.haddr, tr.hwdata);
+      end
+   endtask
 
-task wrap4_wr();
-   mbxgm.get(temp);
-   repeat(4)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b1;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] wrap4 write haddr=%0h hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-   end
-endtask
+   task burst_read(int beats);
+      tr        = new();
+      tr.haddr  = vif.haddr;
+      tr.hwrite = 0;
+      @(posedge vif.clk);
+      tr.hrdata = vif.hrdata;
+      mbxms.put(tr);
+      $display("[MON] BURST READ addr=%0h data=%0h",
+               tr.haddr, tr.hrdata);
 
-task wrap4_rd();
-   mbxgm.get(temp);
-   repeat(4)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] wrap4 read haddr=%0h hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-   end
-endtask
+      repeat(beats-1)
+      begin
+         tr        = new();
+         tr.haddr  = vif.haddr;
+         tr.hwrite = 0;
+         @(posedge vif.clk);
+         tr.hrdata = vif.hrdata;
+         mbxms.put(tr);
+         $display("[MON] BURST READ addr=%0h data=%0h",
+                  tr.haddr, tr.hrdata);
+      end
+   endtask
 
-task incr4_wr();
-   mbxgm.get(temp);
-   repeat(4)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b1;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] incr4 write haddr=%0h hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-   end
-endtask
+   task run();
+      forever
+      begin
+         @(posedge vif.clk);
 
-task incr4_rd();
-   mbxgm.get(temp);
-   repeat(4)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] incr4 read haddr=%0h hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-   end
-endtask
+         if(vif.hresetn && vif.hsel &&
+            (vif.htrans inside {2'b10, 2'b11}))
+         begin
+            case(vif.hburst)
+               3'b000:
+                  if(vif.hwrite) single_write();
+                  else           single_read();
 
-task wrap8_wr();
-   mbxgm.get(temp);
-   repeat(8)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b1;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] wrap8 write haddr=%0h hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-   end
-endtask
+               3'b001:
+               begin
+                  mbxgm.get(burst_len);
+                  if(vif.hwrite) burst_write(burst_len);
+                  else           burst_read(burst_len);
+               end
 
-task wrap8_rd();
-   mbxgm.get(temp);
-   repeat(8)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] wrap8 read haddr=%0h hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-   end
-endtask
+               3'b010:
+                  if(vif.hwrite) burst_write(4);
+                  else           burst_read(4);
 
-task incr8_wr();
-   mbxgm.get(temp);
-   repeat(8)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b1;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] incr8 write haddr=%0h hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-   end
-endtask
+               3'b011:
+                  if(vif.hwrite) burst_write(4);
+                  else           burst_read(4);
 
-task incr8_rd();
-   mbxgm.get(temp);
-   repeat(8)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] incr8 read haddr=%0h hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-   end
-endtask
+               3'b100:
+                  if(vif.hwrite) burst_write(8);
+                  else           burst_read(8);
 
-task wrap16_wr();
-   mbxgm.get(temp);
-   repeat(16)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b1;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] wrap16 write haddr=%0h hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-   end
-endtask
+               3'b101:
+                  if(vif.hwrite) burst_write(8);
+                  else           burst_read(8);
 
-task wrap16_rd();
-   mbxgm.get(temp);
-   repeat(16)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] wrap16 read haddr=%0h hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-   end
-endtask
+               3'b110:
+                  if(vif.hwrite) burst_write(16);
+                  else           burst_read(16);
 
-task incr16_wr();
-   mbxgm.get(temp);
-   repeat(16)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b1;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] incr16 write haddr=%0h hwdata=%0d",tr.haddr,tr.hwdata);
-   @(posedge vif.clk);
-   end
-endtask
+               3'b111:
+                  if(vif.hwrite) burst_write(16);
+                  else           burst_read(16);
+            endcase
+         end
+      end
+   endtask
 
-task incr16_rd();
-   mbxgm.get(temp);
-   repeat(16)begin
-   @(posedge vif.hready);
-   @(posedge vif.clk);
-   tr.hwrite  = 1'b0;
-   tr.haddr   = vif.next_addr;
-   tr.hrdata  = vif.hrdata;
-   tr.hsize   = vif.hsize;
-   tr.htrans  = vif.htrans;
-   tr.hwdata  = vif.hwdata;
-   tr.hburst  = vif.hburst;
-   tr.hsel    = vif.hsel;
-   mbxms.put(tr);
-   $display("[MON] incr16 read haddr=%0h hrdata=%0d",tr.haddr,tr.hrdata);
-   @(posedge vif.clk);
-   end
-endtask
-
-  task run();
-   tr = new();
-   forever begin
-   @(posedge vif.clk);
-   if(vif.hresetn && vif.hsel && vif.hwrite) begin
-    case(vif.hburst)
-      3'b000:single_tr_wr();
-      3'b001:unspec_len_wr();
-      3'b010:wrap4_wr();
-      3'b011:incr4_wr();
-      3'b100:wrap8_wr();
-      3'b101:incr8_wr();
-      3'b110:wrap16_wr();
-      3'b111:incr16_wr();
-   endcase
-end
-
-   if(vif.hresetn && vif.hsel && vif.hwrite==1'b0) begin
-   case(vif.hburst)
-      3'b000:single_tr_rd();
-      3'b001:unspec_len_rd();
-      3'b010:wrap4_rd();
-      3'b011:incr4_rd();
-      3'b100:wrap8_rd();
-      3'b101:incr8_rd();
-      3'b110:wrap16_rd();
-      3'b111:incr16_rd();
-   endcase
-   end
-end
-endtask
 endclass
